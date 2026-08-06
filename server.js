@@ -5,12 +5,32 @@ require('dotenv').config();
 
 const connectDB = require('./config/db');
 const shipmentRoutes = require('./routes/shipmentRoutes');
-const { validateLogin, generateToken } = require('./middleware/auth');
+const { authenticateUser, validateLogin, generateToken } = require('./middleware/auth');
+const User = require('./models/User'); // ✅ ADD THIS
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 connectDB();
+
+// ===== SEED DEFAULT USER (if none exists) =====
+const seedDefaultUser = async () => {
+    try {
+        const existingUser = await User.findOne({ username: 'swift' });
+        if (!existingUser) {
+            const user = new User({
+                username: 'swift',
+                password: 'swift237$',
+                role: 'admin'
+            });
+            await user.save();
+            console.log('✅ Default admin user created');
+        }
+    } catch (error) {
+        // User already exists or error - ignore
+    }
+};
+seedDefaultUser();
 
 // ===== MIDDLEWARE =====
 app.use(cors({
@@ -39,22 +59,44 @@ app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// ===== LOGIN ROUTE (MUST BE BEFORE ANY CATCH-ALL) =====
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    
-    console.log('🔐 Login attempt:', username);
-    
-    if (validateLogin(username, password)) {
-        const token = generateToken(username);
-        req.session.user = { username, role: 'admin' };
-        res.json({
-            success: true,
-            token,
-            user: { username, role: 'admin' }
-        });
-    } else {
-        res.status(401).json({ error: 'Invalid credentials' });
+// ===== LOGIN ROUTE (UPDATED) =====
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        
+        console.log('🔐 Login attempt:', username);
+
+        // Try database first
+        const result = await validateLogin(username, password);
+        
+        if (result.success) {
+            const token = generateToken(result.userId || username, username);
+            req.session.user = { 
+                id: result.userId,
+                username: username, 
+                role: 'admin' 
+            };
+            
+            // Update lastLogin if user exists in DB
+            if (result.userId) {
+                await User.findByIdAndUpdate(result.userId, { lastLogin: new Date() });
+            }
+            
+            res.json({
+                success: true,
+                token,
+                user: { 
+                    id: result.userId,
+                    username: username, 
+                    role: 'admin' 
+                }
+            });
+        } else {
+            res.status(401).json({ error: 'Invalid credentials' });
+        }
+    } catch (error) {
+        console.error('❌ Login error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -73,7 +115,101 @@ app.get('/api/auth/check', (req, res) => {
     }
 });
 
-// ===== SHIPMENT ROUTES =====
+// ============================================================
+// ✅ NEW: PROFILE ROUTES
+// ============================================================
+
+// ===== GET PROFILE =====
+app.get('/api/profile', authenticateUser, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-password');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error('❌ Profile error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ===== UPDATE USERNAME =====
+app.put('/api/profile/username', authenticateUser, async (req, res) => {
+    try {
+        const { username } = req.body;
+        
+        if (!username || username.length < 3) {
+            return res.status(400).json({ error: 'Username must be at least 3 characters' });
+        }
+        
+        const existingUser = await User.findOne({ 
+            username, 
+            _id: { $ne: req.user.id } 
+        });
+        
+        if (existingUser) {
+            return res.status(400).json({ error: 'Username already taken' });
+        }
+        
+        const user = await User.findByIdAndUpdate(
+            req.user.id,
+            { username },
+            { new: true }
+        ).select('-password');
+        
+        // Update session
+        req.session.user.username = username;
+        
+        res.json({ 
+            success: true, 
+            message: 'Username updated successfully',
+            user
+        });
+    } catch (error) {
+        console.error('❌ Username update error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ===== UPDATE PASSWORD =====
+app.put('/api/profile/password', authenticateUser, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ error: 'Current and new password required' });
+        }
+        
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+        
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        const isMatch = await user.comparePassword(currentPassword);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+        }
+        
+        user.password = newPassword;
+        await user.save();
+        
+        res.json({ 
+            success: true, 
+            message: 'Password updated successfully' 
+        });
+    } catch (error) {
+        console.error('❌ Password update error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================
+// SHIPMENT ROUTES
+// ============================================================
 app.use('/api/shipments', shipmentRoutes);
 
 // ===== 404 HANDLER FOR API =====

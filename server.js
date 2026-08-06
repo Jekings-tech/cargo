@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 
 connectDB();
 
-// ===== SEED DEFAULT USER (if none exists) =====
+// ===== SEED DEFAULT USER =====
 const seedDefaultUser = async () => {
     try {
         const existingUser = await User.findOne({ username: 'swift' });
@@ -27,7 +27,7 @@ const seedDefaultUser = async () => {
             console.log('✅ Default admin user created');
         }
     } catch (error) {
-        // User already exists or error - ignore
+        // Ignore
     }
 };
 seedDefaultUser();
@@ -43,7 +43,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ===== SESSION =====
 app.use(session({
     secret: process.env.JWT_SECRET || 'fallback_secret',
     resave: false,
@@ -54,16 +53,14 @@ app.use(session({
     }
 }));
 
-// ===== HEALTH CHECK =====
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// ===== LOGIN ROUTE =====
+// ===== LOGIN =====
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        
         console.log('🔐 Login attempt:', username);
 
         const result = await validateLogin(username, password);
@@ -98,13 +95,11 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// ===== LOGOUT =====
 app.post('/api/logout', (req, res) => {
     req.session.destroy();
     res.json({ success: true });
 });
 
-// ===== AUTH CHECK =====
 app.get('/api/auth/check', (req, res) => {
     if (req.session.user) {
         res.json({ authenticated: true, user: req.session.user });
@@ -114,13 +109,11 @@ app.get('/api/auth/check', (req, res) => {
 });
 
 // ============================================================
-// ✅ FIXED: PROFILE ROUTES - Use req.user.id (from JWT)
+// ✅ PROFILE ROUTES
 // ============================================================
 
-// ===== GET PROFILE =====
 app.get('/api/profile', authenticateUser, async (req, res) => {
     try {
-        // ✅ Use req.user.id (from JWT token)
         if (req.user.id) {
             try {
                 const user = await User.findById(req.user.id).select('-password');
@@ -128,17 +121,15 @@ app.get('/api/profile', authenticateUser, async (req, res) => {
                     return res.json(user);
                 }
             } catch (dbError) {
-                console.log('⚠️ Database lookup failed for user:', req.user.id);
+                console.log('⚠️ Database lookup failed');
             }
             
-            // Fallback: return token data
             return res.json({
                 username: req.user.username || 'User',
                 role: req.user.role || 'admin'
             });
         }
         
-        // Fallback
         res.json({
             username: req.user.username || 'User',
             role: req.user.role || 'admin'
@@ -149,7 +140,6 @@ app.get('/api/profile', authenticateUser, async (req, res) => {
     }
 });
 
-// ===== UPDATE USERNAME =====
 app.put('/api/profile/username', authenticateUser, async (req, res) => {
     try {
         const { username } = req.body;
@@ -158,7 +148,6 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Username must be at least 3 characters' });
         }
         
-        // ✅ Try to update in database
         if (req.user.id) {
             try {
                 const existingUser = await User.findOne({ 
@@ -192,7 +181,7 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
             }
         }
         
-        // ✅ FALLBACK: Update session only
+        // Fallback: update session
         if (req.session.user) {
             req.session.user.username = username;
         }
@@ -209,7 +198,6 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
     }
 });
 
-// ===== UPDATE PASSWORD =====
 app.put('/api/profile/password', authenticateUser, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
@@ -222,7 +210,6 @@ app.put('/api/profile/password', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
         
-        // ✅ Try to update in database
         if (req.user.id) {
             try {
                 const user = await User.findById(req.user.id);
@@ -245,7 +232,7 @@ app.put('/api/profile/password', authenticateUser, async (req, res) => {
             }
         }
         
-        // ✅ FALLBACK: For hardcoded users
+        // Fallback for hardcoded users
         const VALID_CREDENTIALS = { password: 'swift237$' };
         if (currentPassword === VALID_CREDENTIALS.password) {
             return res.json({ 
@@ -267,13 +254,11 @@ app.put('/api/profile/password', authenticateUser, async (req, res) => {
 // ============================================================
 app.use('/api/shipments', shipmentRoutes);
 
-// ===== 404 HANDLER FOR API =====
 app.use('/api/*', (req, res) => {
     console.log('❌ API endpoint not found:', req.originalUrl);
     res.status(404).json({ error: 'API endpoint not found' });
 });
 
-// ===== START SERVER =====
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📦 MongoDB: ${process.env.MONGODB_URI ? '✅ Connected' : '❌ Not configured'}`);

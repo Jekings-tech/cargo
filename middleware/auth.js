@@ -3,8 +3,8 @@ const User = require('../models/User'); // ✅ ADD THIS
 
 // ✅ KEEP YOUR EXISTING CREDENTIALS (as fallback)
 const VALID_CREDENTIALS = {
-    username: 'swift',
-    password: 'swift237$'
+    username: 'Wavepapi',
+    password: 'Wavepapi123'
 };
 
 // ============================================================

@@ -1,15 +1,3 @@
-const jwt = require('jsonwebtoken');
-const User = require('../models/User'); // ✅ ADD THIS
-
-// ✅ KEEP YOUR EXISTING CREDENTIALS (as fallback)
-const VALID_CREDENTIALS = {
-    username: 'Wavepapi',
-    password: 'Wavepapi123'
-};
-
-// ============================================================
-// ✅ UPDATED: authenticateUser - Now checks database AND fallback
-// ============================================================
 const authenticateUser = async (req, res, next) => {
     const token = req.header('Authorization')?.replace('Bearer ', '');
     
@@ -20,66 +8,27 @@ const authenticateUser = async (req, res, next) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         
-        // ✅ TRY DATABASE FIRST
+        // If we have a valid token, ALWAYS set req.user
+        req.user = {
+            id: decoded.id || 'fallback-user',
+            username: decoded.username || 'Wavepapi',
+            role: decoded.role || 'admin'
+        };
+        
+        // Try to get full user from database (optional)
         try {
-            const user = await User.findById(decoded.id).select('-password');
-            if (user) {
-                req.user = user;
-                return next();
+            if (decoded.id) {
+                const user = await User.findById(decoded.id).select('-password');
+                if (user) {
+                    req.user = user;
+                }
             }
         } catch (dbError) {
-            // Database error - fallback to token data
-            console.log('⚠️ Database lookup failed, using token data');
+            // Ignore DB errors, use token data
         }
         
-        // ✅ FALLBACK: Use token data (for backward compatibility)
-        req.user = decoded;
         next();
     } catch (error) {
         res.status(401).json({ error: 'Invalid token' });
     }
 };
-
-// ============================================================
-// ✅ UPDATED: validateLogin - Checks database FIRST, then fallback
-// ============================================================
-const validateLogin = async (username, password) => {
-    // ✅ TRY DATABASE FIRST
-    try {
-        const user = await User.findOne({ username });
-        if (user) {
-            const isMatch = await user.comparePassword(password);
-            if (isMatch) {
-                return { success: true, userId: user._id };
-            }
-            return { success: false };
-        }
-    } catch (error) {
-        console.log('⚠️ Database login error, using fallback:', error.message);
-    }
-    
-    // ✅ FALLBACK: Use hardcoded credentials
-    if (username === VALID_CREDENTIALS.username && 
-        password === VALID_CREDENTIALS.password) {
-        return { success: true, userId: null };
-    }
-    
-    return { success: false };
-};
-
-// ============================================================
-// ✅ UPDATED: generateToken - Now handles both userId and username
-// ============================================================
-const generateToken = (userId, username) => {
-    return jwt.sign(
-        { 
-            id: userId,           // ✅ For database users
-            username: username,   // ✅ For fallback users
-            role: 'admin' 
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: '24h' }
-    );
-};
-
-module.exports = { authenticateUser, validateLogin, generateToken };

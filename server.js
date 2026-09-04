@@ -13,51 +13,6 @@ const PORT = process.env.PORT || 5000;
 
 connectDB();
 
-// ===== SEED DEFAULT USER =====
-const seedDefaultUser = async () => {
-    try {
-        const existingUser = await User.findOne({ username: 'swift' });
-        if (!existingUser) {
-             
-const user = new User({
-    username: 'Wavepapi',
-    password: 'Wavepapi123',
-    role: 'admin'
-});
-            await user.save();
-            console.log('✅ Default admin user created');
-        }
-    } catch (error) {
-        // Ignore
-    }
-};
-
-// ===== FIX: Re-hash default user password if stored as plain text =====
-const fixDefaultUserPassword = async () => {
-    try {
-        const user = await User.findOne({ username: 'swift' });
-        if (user) {
-            // Check if password is already hashed (starts with $2a$ or $2b$)
-            if (!user.password.startsWith('$2a$') && !user.password.startsWith('$2b$')) {
-                console.log('🔑 Found plain text password, re-hashing...');
-                const bcrypt = require('bcryptjs');
-                const salt = await bcrypt.genSalt(10);
-                const hashedPassword = await bcrypt.hash('swift237$', salt);
-                user.password = hashedPassword;
-                await user.save();
-                console.log('✅ Default user password re-hashed successfully');
-            } else {
-                console.log('✅ Default user password is already hashed');
-            }
-        }
-    } catch (error) {
-        console.error('❌ Error fixing default user password:', error.message);
-    }
-};
-
-seedDefaultUser();
-fixDefaultUserPassword(); // ← Re-hash password if needed
-
 // ===== MIDDLEWARE =====
 app.use(cors({
     origin: '*',
@@ -135,31 +90,16 @@ app.get('/api/auth/check', (req, res) => {
 });
 
 // ============================================================
-// ✅ PROFILE ROUTES
+// ✅ PROFILE ROUTES - CLEAN, NO FALLBACKS
 // ============================================================
 
 app.get('/api/profile', authenticateUser, async (req, res) => {
     try {
-        if (req.user.id) {
-            try {
-                const user = await User.findById(req.user.id).select('-password');
-                if (user) {
-                    return res.json(user);
-                }
-            } catch (dbError) {
-                console.log('⚠️ Database lookup failed');
-            }
-            
-            return res.json({
-                username: req.user.username || 'User',
-                role: req.user.role || 'admin'
-            });
+        const user = await User.findById(req.user.id).select('-password');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
         }
-        
-        res.json({
-            username: req.user.username || 'User',
-            role: req.user.role || 'admin'
-        });
+        res.json(user);
     } catch (error) {
         console.error('❌ Profile error:', error);
         res.status(500).json({ error: error.message });
@@ -174,48 +114,35 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Username must be at least 3 characters' });
         }
         
-        if (req.user.id) {
-            try {
-                const existingUser = await User.findOne({ 
-                    username, 
-                    _id: { $ne: req.user.id } 
-                });
-                
-                if (existingUser) {
-                    return res.status(400).json({ error: 'Username already taken' });
-                }
-                
-                const user = await User.findByIdAndUpdate(
-                    req.user.id,
-                    { username },
-                    { new: true }
-                ).select('-password');
-                
-                if (user) {
-                    if (req.session.user) {
-                        req.session.user.username = username;
-                    }
-                    
-                    return res.json({ 
-                        success: true, 
-                        message: 'Username updated successfully',
-                        user
-                    });
-                }
-            } catch (dbError) {
-                console.log('⚠️ Database update failed:', dbError.message);
-            }
+        // Check if username already taken
+        const existingUser = await User.findOne({ 
+            username, 
+            _id: { $ne: req.user.id } 
+        });
+        
+        if (existingUser) {
+            return res.status(400).json({ error: 'Username already taken' });
         }
         
-        // Fallback: update session
+        const user = await User.findByIdAndUpdate(
+            req.user.id,
+            { username },
+            { new: true }
+        ).select('-password');
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        // Update session
         if (req.session.user) {
             req.session.user.username = username;
         }
         
-        return res.json({ 
+        res.json({ 
             success: true, 
             message: 'Username updated successfully',
-            user: { username, role: req.user.role || 'admin' }
+            user
         });
         
     } catch (error) {
@@ -224,6 +151,7 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
     }
 });
 
+// ===== FIXED: Password Update - NO FALLBACKS =====
 app.put('/api/profile/password', authenticateUser, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
@@ -236,38 +164,26 @@ app.put('/api/profile/password', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
         
-        if (req.user.id) {
-            try {
-                const user = await User.findById(req.user.id);
-                if (user) {
-                    const isMatch = await user.comparePassword(currentPassword);
-                    if (!isMatch) {
-                        return res.status(401).json({ error: 'Current password is incorrect' });
-                    }
-                    
-                    user.password = newPassword;
-                    await user.save();
-                    
-                    return res.json({ 
-                        success: true, 
-                        message: 'Password updated successfully' 
-                    });
-                }
-            } catch (dbError) {
-                console.log('⚠️ Database update failed:', dbError.message);
-            }
+        // Get user from database
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
         }
         
-        // Fallback for hardcoded users
-        const VALID_CREDENTIALS = { password: 'swift237$' };
-        if (currentPassword === VALID_CREDENTIALS.password) {
-            return res.json({ 
-                success: true, 
-                message: 'Password updated successfully' 
-            });
+        // Verify current password
+        const isMatch = await user.comparePassword(currentPassword);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
         }
         
-        return res.status(401).json({ error: 'Current password is incorrect' });
+        // Update password (will be hashed by pre-save hook)
+        user.password = newPassword;
+        await user.save();
+        
+        res.json({ 
+            success: true, 
+            message: 'Password updated successfully' 
+        });
         
     } catch (error) {
         console.error('❌ Password update error:', error);

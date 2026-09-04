@@ -30,7 +30,32 @@ const seedDefaultUser = async () => {
         // Ignore
     }
 };
+
+// ===== FIX: Re-hash default user password if stored as plain text =====
+const fixDefaultUserPassword = async () => {
+    try {
+        const user = await User.findOne({ username: 'swift' });
+        if (user) {
+            // Check if password is already hashed (starts with $2a$ or $2b$)
+            if (!user.password.startsWith('$2a$') && !user.password.startsWith('$2b$')) {
+                console.log('🔑 Found plain text password, re-hashing...');
+                const bcrypt = require('bcryptjs');
+                const salt = await bcrypt.genSalt(10);
+                const hashedPassword = await bcrypt.hash('swift237$', salt);
+                user.password = hashedPassword;
+                await user.save();
+                console.log('✅ Default user password re-hashed successfully');
+            } else {
+                console.log('✅ Default user password is already hashed');
+            }
+        }
+    } catch (error) {
+        console.error('❌ Error fixing default user password:', error.message);
+    }
+};
+
 seedDefaultUser();
+fixDefaultUserPassword(); // ← Re-hash password if needed
 
 // ===== MIDDLEWARE =====
 app.use(cors({

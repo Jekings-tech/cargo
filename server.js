@@ -18,11 +18,12 @@ const seedDefaultUser = async () => {
     try {
         const existingUser = await User.findOne({ username: 'swift' });
         if (!existingUser) {
-            const user = new User({
-                username: 'swift',
-                password: 'swift237$',
-                role: 'admin'
-            });
+             
+const user = new User({
+    username: 'Wavepapi',
+    password: 'Wavepapi123',
+    role: 'admin'
+});
             await user.save();
             console.log('✅ Default admin user created');
         }

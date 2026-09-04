@@ -90,7 +90,7 @@ app.get('/api/auth/check', (req, res) => {
 });
 
 // ============================================================
-// ✅ PROFILE ROUTES - CLEAN, NO FALLBACKS
+// ✅ PROFILE ROUTES - ADDED BACK
 // ============================================================
 
 app.get('/api/profile', authenticateUser, async (req, res) => {
@@ -114,7 +114,6 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Username must be at least 3 characters' });
         }
         
-        // Check if username already taken
         const existingUser = await User.findOne({ 
             username, 
             _id: { $ne: req.user.id } 
@@ -134,7 +133,6 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         
-        // Update session
         if (req.session.user) {
             req.session.user.username = username;
         }
@@ -151,7 +149,6 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
     }
 });
 
-// ===== FIXED: Password Update - NO FALLBACKS =====
 app.put('/api/profile/password', authenticateUser, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
@@ -164,19 +161,16 @@ app.put('/api/profile/password', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
         
-        // Get user from database
         const user = await User.findById(req.user.id);
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
         
-        // Verify current password
         const isMatch = await user.comparePassword(currentPassword);
         if (!isMatch) {
             return res.status(401).json({ error: 'Current password is incorrect' });
         }
         
-        // Update password (will be hashed by pre-save hook)
         user.password = newPassword;
         await user.save();
         

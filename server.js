@@ -13,6 +13,28 @@ const PORT = process.env.PORT || 5000;
 
 connectDB();
 
+// ===== SEED DEFAULT USER (CREATE IF NONE EXISTS) =====
+const seedDefaultUser = async () => {
+    try {
+        const existingUser = await User.findOne({});
+        if (existingUser) {
+            console.log('✅ Users already exist in database');
+            return;
+        }
+        
+        const user = new User({
+            username: 'Wavepapi',
+            password: 'Wavepapi123',
+            role: 'admin'
+        });
+        await user.save();
+        console.log('✅ Default admin user created: Wavepapi / Wavepapi123');
+    } catch (error) {
+        console.error('❌ Seed error:', error);
+    }
+};
+seedDefaultUser();
+
 // ===== MIDDLEWARE =====
 app.use(cors({
     origin: '*',
@@ -90,27 +112,29 @@ app.get('/api/auth/check', (req, res) => {
 });
 
 // ============================================================
-// ✅ PROFILE ROUTES - FIXED
+// ✅ PROFILE ROUTES
 // ============================================================
 
 app.get('/api/profile', authenticateUser, async (req, res) => {
     try {
-        if (req.user.id === 'fallback-user' || !req.user.id) {
+        // Find user in database by ID or username
+        let user = null;
+        
+        if (req.user.id && req.user.id !== 'fallback-user') {
+            user = await User.findById(req.user.id).select('-password');
+        }
+        
+        if (!user && req.user.username) {
+            user = await User.findOne({ username: req.user.username }).select('-password');
+        }
+        
+        if (!user) {
             return res.json({
-                id: req.user.id,
                 username: req.user.username || 'Wavepapi',
                 role: req.user.role || 'admin'
             });
         }
         
-        const user = await User.findById(req.user.id).select('-password');
-        if (!user) {
-            return res.json({
-                id: req.user.id,
-                username: req.user.username || 'Wavepapi',
-                role: req.user.role || 'admin'
-            });
-        }
         res.json(user);
     } catch (error) {
         console.error('❌ Profile error:', error);
@@ -126,35 +150,33 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Username must be at least 3 characters' });
         }
         
-        if (req.user.id === 'fallback-user' || !req.user.id) {
-            if (req.session.user) {
-                req.session.user.username = username;
-            }
-            return res.json({ 
-                success: true, 
-                message: 'Username updated successfully',
-                user: { username, role: 'admin' }
-            });
+        // Find user in database
+        let user = null;
+        
+        if (req.user.id && req.user.id !== 'fallback-user') {
+            user = await User.findById(req.user.id);
         }
         
+        if (!user && req.user.username) {
+            user = await User.findOne({ username: req.user.username });
+        }
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        // Check if username already taken
         const existingUser = await User.findOne({ 
             username, 
-            _id: { $ne: req.user.id } 
+            _id: { $ne: user._id } 
         });
         
         if (existingUser) {
             return res.status(400).json({ error: 'Username already taken' });
         }
         
-        const user = await User.findByIdAndUpdate(
-            req.user.id,
-            { username },
-            { new: true }
-        ).select('-password');
-        
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
+        user.username = username;
+        await user.save();
         
         if (req.session.user) {
             req.session.user.username = username;
@@ -163,7 +185,7 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
         res.json({ 
             success: true, 
             message: 'Username updated successfully',
-            user
+            user: { username, role: user.role }
         });
         
     } catch (error) {
@@ -172,7 +194,7 @@ app.put('/api/profile/username', authenticateUser, async (req, res) => {
     }
 });
 
-// ===== FIXED: Password Update - ACTUALLY SAVES TO DATABASE =====
+// ===== FIXED: Password Update =====
 app.put('/api/profile/password', authenticateUser, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
@@ -185,55 +207,31 @@ app.put('/api/profile/password', authenticateUser, async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
         
-        // ✅ Check if using fallback user
-        if (req.user.id === 'fallback-user' || !req.user.id) {
-            // ✅ Try to find the user in the database by username
-            try {
-                const user = await User.findOne({ username: req.user.username || 'Wavepapi' });
-                if (user) {
-                    // Verify current password
-                    const isMatch = await user.comparePassword(currentPassword);
-                    if (!isMatch) {
-                        return res.status(401).json({ error: 'Current password is incorrect' });
-                    }
-                    // Update password (will be hashed by pre-save hook)
-                    user.password = newPassword;
-                    await user.save();
-                    console.log('✅ Password updated for user:', user.username);
-                    return res.json({ 
-                        success: true, 
-                        message: 'Password updated successfully' 
-                    });
-                } else {
-                    // User not in DB - for fallback, just return success
-                    console.log('⚠️ Fallback user not found in DB, but returning success');
-                    return res.json({ 
-                        success: true, 
-                        message: 'Password updated successfully' 
-                    });
-                }
-            } catch (dbError) {
-                console.error('❌ DB error for fallback user:', dbError);
-                return res.json({ 
-                    success: true, 
-                    message: 'Password updated successfully' 
-                });
-            }
+        // Find user in database
+        let user = null;
+        
+        if (req.user.id && req.user.id !== 'fallback-user') {
+            user = await User.findById(req.user.id);
         }
         
-        // Normal database flow for real users
-        const user = await User.findById(req.user.id);
+        if (!user && req.user.username) {
+            user = await User.findOne({ username: req.user.username });
+        }
+        
         if (!user) {
-            return res.status(404).json({ error: 'User not found' });
+            return res.status(404).json({ error: 'User not found in database' });
         }
         
+        // Verify current password
         const isMatch = await user.comparePassword(currentPassword);
         if (!isMatch) {
             return res.status(401).json({ error: 'Current password is incorrect' });
         }
         
+        // Update password (will be hashed by pre-save hook)
         user.password = newPassword;
         await user.save();
+        
         console.log('✅ Password updated for user:', user.username);
         
         res.json({ 

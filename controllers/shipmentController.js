@@ -1,5 +1,6 @@
 const Shipment = require('../models/Shipment');
 const axios = require('axios');
+const { sendShipmentCreatedEmails } = require('../utils/sendEmail');
 
 const geocodeLocation = async (location) => {
     try {
@@ -115,6 +116,11 @@ exports.createShipment = async (req, res) => {
 
         await shipment.save();
         res.status(201).json(shipment);
+
+        // Fire notification emails in the background — do not block the admin's request
+        sendShipmentCreatedEmails(shipment).catch(err =>
+            console.error('Shipment email error:', err.message)
+        );
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
